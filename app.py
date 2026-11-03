@@ -14,7 +14,7 @@ from groq import Groq
 import knowledge as K
 
 COURSE_DIR = Path(__file__).parent / "course_files"
-PRESET_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+PRESET_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]   # free-tier models on Groq (Llama 3.x moved to Enterprise-only)
 CONTEXT_SIZES = {"Small (fast, fits tight free limits)": 5000, "Medium (recommended)": 8000, "Large (more detail)": 12000}
 
 STARTERS = {
@@ -73,13 +73,20 @@ def build_messages(question, history, excerpts):
     """System persona + last few turns + the new question carrying its retrieved excerpts."""
     ctx = "\n\n".join(f"[{i}] SOURCE: {c.source} > {c.loc}\n{c.text}" for i, c in enumerate(excerpts, 1)) or "(no matching excerpts found)"
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
-    msgs += [{"role": m["role"], "content": m["content"]} for m in history[-6:]]
+    msgs += [{"role": m["role"], "content": m["content"]} for m in history[-4:]]
     msgs.append({"role": "user", "content": f"COURSE EXCERPTS:\n{ctx}\n\nQUESTION: {question}"})
     return msgs
 
 
 def stream_llm(client, model, messages):
-    stream = client.chat.completions.create(model=model, messages=messages, temperature=0.2, max_tokens=1300, stream=True)
+    kw = dict(model=model, messages=messages, temperature=0.2, stream=True, max_completion_tokens=2500)
+    if model.startswith("openai/gpt-oss"):
+        kw["extra_body"] = {"reasoning_effort": "low"}     # keep hidden reasoning short so the answer is not cut off
+    try:
+        stream = client.chat.completions.create(**kw)
+    except TypeError:                                       # older groq SDK without max_completion_tokens
+        kw["max_tokens"] = kw.pop("max_completion_tokens")
+        stream = client.chat.completions.create(**kw)
     for ev in stream:
         if ev.choices and ev.choices[0].delta.content:
             yield ev.choices[0].delta.content
